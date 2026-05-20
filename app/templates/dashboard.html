@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>Today's Activity</h1>
+
+<form hx-post="/ask" hx-target="#answer" hx-swap="innerHTML">
+    <input type="text" name="question" placeholder="What did I work on today?" />
+    <button type="submit">Ask</button>
+</form>
+
+<div id="answer"></div>
+
+<hr>
+
+<h2>Browser Activity</h2>
+{% if activities %}
+    {% for a in activities %}
+    <div class="card">
+        <strong>{{ a.source }}</strong>
+        <span class="tag">{{ a.category }}</span>
+        <p>{{ a.title }}</p>
+        <small>{{ (a.duration_seconds // 60) }} mins &mdash; {{ a.timestamp }}</small>
+    </div>
+    {% endfor %}
+{% else %}
+    <p>No browser activity recorded yet.</p>
+{% endif %}
+
+<h2>Emails</h2>
+{% if emails %}
+    {% for e in emails %}
+    <div class="card">
+        <strong>{{ e.subject }}</strong>
+        <p><small>From: {{ e.sender }}</small></p>
+        <p>{{ e.snippet }}</p>
+        <small>{{ e.timestamp }}</small>
+    </div>
+    {% endfor %}
+{% else %}
+    <p>No emails recorded yet.</p>
+{% endif %}
+
+<hr>
+<button hx-post="/sync" hx-swap="none">Sync Now</button>
+{% endblock %}

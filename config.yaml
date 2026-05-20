@@ -1,0 +1,17 @@
+sources:
+  - name: LeetCode
+    type: browser
+    url: leetcode.com
+    category: coding_practice
+  - name: LinkedIn
+    type: browser
+    url: linkedin.com
+    category: job_search
+  - name: GitHub
+    type: browser
+    url: github.com
+    category: coding
+  - name: Gmail
+    type: api
+    connector: gmail
+    category: communication
