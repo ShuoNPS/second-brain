@@ -1,4 +1,14 @@
 <div class="answer">
     <strong>Q: {{ question }}</strong>
-    <p>{{ answer }}</p>
+    <div class="answer-body">
+        {% for line in answer.split('\n') %}
+            {% if line.strip() %}
+                {% if not line.startswith('  ') and not line.startswith('•') and not line.startswith('-') %}
+                    <p class="answer-section">{{ line }}</p>
+                {% else %}
+                    <p class="answer-bullet">{{ line }}</p>
+                {% endif %}
+            {% endif %}
+        {% endfor %}
+    </div>
 </div>

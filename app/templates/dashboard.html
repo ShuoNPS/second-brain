@@ -3,26 +3,49 @@
 {% block content %}
 <h1>Today's Activity</h1>
 
-<form hx-post="/ask" hx-target="#answer" hx-swap="innerHTML" hx-indicator="#spinner">
+<form hx-post="/ask" hx-target="#answer" hx-swap="innerHTML" hx-indicator="#spinner" hx-on::after-request="document.getElementById('clear-btn').style.display='inline'">
     <input type="text" name="question" placeholder="What did I work on today?" />
     <button type="submit">Ask</button>
     <span id="spinner" class="htmx-indicator"> ⏳ Thinking...</span>
 </form>
 
 <div id="answer"></div>
+<button id="clear-btn" style="display:none; margin-top:8px; font-size:12px;" onclick="document.getElementById('answer').innerHTML=''; this.style.display='none'">✕ Clear</button>
 
 <hr>
 
 <div class="tabs">
-    <button class="tab-btn active" onclick="switchTab('sessions')">🧩 Sessions</button>
+    <button class="tab-btn active" onclick="switchTab('focus')">🎯 Focus Sessions</button>
+    <button class="tab-btn" onclick="switchTab('sessions')">🧩 Sessions</button>
     <button class="tab-btn" onclick="switchTab('emails')">✉️ Emails</button>
+    <button class="tab-btn" onclick="switchTab('calendar')">📅 Calendar</button>
 </div>
 
-<div id="tab-sessions" class="tab-content">
+<div id="tab-focus" class="tab-content">
+    {% include "focus_sessions.html" %}
+
+    <hr style="margin: 20px 0">
+    <form hx-post="/focus_sessions" hx-target="#focus-sessions-list" hx-swap="outerHTML">
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+            <input type="text" name="emoji" value="🎯" style="width:40px; text-align:center; padding:6px;">
+            <input type="text" name="name" placeholder="Focus session name..." style="flex:1; min-width:200px;">
+            <input type="text" name="frequency" placeholder="Frequency (optional, e.g. daily)" style="width:180px;">
+            <button type="submit">+ Add</button>
+        </div>
+    </form>
+</div>
+
+<div id="tab-sessions" class="tab-content" style="display:none;">
+
+    <div style="margin-bottom: 12px; display: flex; gap: 8px;">
+        <button id="merge-toggle" onclick="toggleMergeMode()" style="font-size:13px; padding: 6px 14px;">⚡ Merge Sessions</button>
+        <button id="merge-confirm" onclick="confirmMerge()" style="display:none; font-size:13px; padding: 6px 14px; background:#333; color:white; border:none; border-radius:6px; cursor:pointer;">Merge Selected</button>
+        <button id="merge-cancel" onclick="cancelMerge()" style="display:none; font-size:13px; padding: 6px 14px;">Cancel</button>
+    </div>
     {% if sessions %}
         {% for s in sessions %}
-        <div class="session-card">
-            <div class="session-header" onclick="toggleSession(this)">
+        <div class="session-card" data-id="{{ loop.index }}" data-label="{{ s.label }}" data-summary="{{ s.summary }}" style="cursor: grab">
+            <div class="session-header" onclick="handleSessionClick(event, this)">
                 <div>
                     <strong>{{ s.label }}</strong>
                     <p class="session-summary">{{ s.summary }}</p>
@@ -34,13 +57,17 @@
                 </div>
             </div>
             <div class="session-events" style="display:none">
-                {% for e in s.events %}
-                <div class="event-row">
-                    <span class="tag">{{ e.source }}</span>
-                    <span>{{ e.title }}</span>
-                    <small>{{ (e.duration_seconds // 60) }} mins</small>
-                </div>
-                {% endfor %}
+                {% if s.category == 'ai_coding' %}
+                    <p style="padding: 8px 0; color: #444;">{{ s.summary }}</p>
+                {% else %}
+                    {% for e in s.events %}
+                    <div class="event-row">
+                        <span class="tag">{{ e.source }}</span>
+                        <span>{{ e.title }}</span>
+                        <small>{{ (e.duration_seconds // 60) }} mins</small>
+                    </div>
+                    {% endfor %}
+                {% endif %}
             </div>
         </div>
         {% endfor %}
@@ -64,8 +91,28 @@
     {% endif %}
 </div>
 
+<div id="tab-calendar" class="tab-content" style="display:none">
+    {% if calendar_events %}
+        {% for e in calendar_events %}
+        <div class="card">
+            <strong>{{ e.title }}</strong>
+            <p>
+                <small>🕐 {{ e.start | format_time }} – {{ e.end | format_time }}</small>
+                {% if e.location %}<br><small>📍 {{ e.location }}</small>{% endif %}
+                {% if e.meet_link %}<br><small><a href="{{ e.meet_link }}" target="_blank">Join Meeting</a></small>{% endif %}
+            </p>
+            {% if e.attendees %}
+            <small>👥 {{ e.attendees | join(', ') }}</small>
+            {% endif %}
+        </div>
+        {% endfor %}
+    {% else %}
+        <p>No events today.</p>
+    {% endif %}
+</div>
+
 <hr>
-<button hx-post="/sync" hx-swap="none">Sync Now</button>
+<button hx-post="/sync" hx-swap="none" hx-on::after-request="window.location.reload()">Sync Now</button>
 
 <script>
 function switchTab(name) {
@@ -82,5 +129,144 @@ function toggleSession(header) {
     events.style.display = visible ? 'none' : 'block';
     chevron.textContent = visible ? '▼' : '▲';
 }
+
+// Merge sessions
+const MERGE_KEY = 'merged-sessions';
+let mergeMode = false;
+let mergeTarget = null; // first selected = target (B)
+
+function toggleMergeMode() {
+    mergeMode = !mergeMode;
+    document.getElementById('merge-toggle').textContent = mergeMode ? '✕ Exit Merge' : '⚡ Merge Sessions';
+    document.getElementById('merge-confirm').style.display = mergeMode ? 'inline' : 'none';
+    document.getElementById('merge-cancel').style.display = mergeMode ? 'inline' : 'none';
+    if (!mergeMode) clearMergeSelection();
+}
+
+function cancelMerge() {
+    mergeMode = false;
+    mergeTarget = null;
+    document.getElementById('merge-toggle').textContent = '⚡ Merge Sessions';
+    document.getElementById('merge-confirm').style.display = 'none';
+    document.getElementById('merge-cancel').style.display = 'none';
+    clearMergeSelection();
+}
+
+function clearMergeSelection() {
+    document.querySelectorAll('.session-card.selected, .session-card.merge-target').forEach(el => {
+        el.classList.remove('selected', 'merge-target');
+    });
+    mergeTarget = null;
+}
+
+function handleSessionClick(event, header) {
+    if (mergeMode) {
+        event.stopPropagation();
+        const card = header.closest('.session-card');
+        if (!mergeTarget) {
+            mergeTarget = card;
+            card.classList.add('merge-target');
+            card.querySelector('strong').insertAdjacentHTML('afterend', ' <span class="merge-badge">TARGET</span>');
+        } else if (card !== mergeTarget) {
+            card.classList.toggle('selected');
+        }
+    } else {
+        toggleSession(header);
+    }
+}
+
+async function confirmMerge() {
+    if (!mergeTarget) { alert('Click a session first to set it as the merge target.'); return; }
+    const sources = [...document.querySelectorAll('.session-card.selected')];
+    if (sources.length < 1) { alert('Select at least one session to merge into the target.'); return; }
+
+    const allCards = [mergeTarget, ...sources];
+    const labels = allCards.map(el => el.dataset.label);
+    const summaries = allCards.map(el => el.dataset.summary);
+
+    // Show loading state
+    mergeTarget.querySelector('strong').textContent = '⏳ Regenerating...';
+
+    const res = await fetch('/merge-sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            labels,
+            summaries,
+            target_id: mergeTarget.dataset.id,
+            merged_ids: sources.map(el => el.dataset.id),
+        }),
+    });
+    const { label, summary } = await res.json();
+
+    // Update target card
+    const badge = mergeTarget.querySelector('.merge-badge');
+    if (badge) badge.remove();
+    mergeTarget.querySelector('strong').textContent = label;
+    mergeTarget.querySelector('.session-summary').textContent = summary;
+    mergeTarget.dataset.label = label;
+    mergeTarget.dataset.summary = summary;
+
+    // Remove merged source cards
+    sources.forEach(el => el.remove());
+
+    saveOrder();
+    cancelMerge();
+}
+
+function saveMerges() {
+    const cards = [...document.querySelectorAll('.session-card')];
+    const state = cards.map(el => ({ id: el.dataset.id, label: el.dataset.label, summary: el.dataset.summary }));
+    localStorage.setItem(MERGE_KEY, JSON.stringify(state));
+}
+
+function restoreMerges() {
+    const saved = localStorage.getItem(MERGE_KEY);
+    if (!saved) return;
+    const state = JSON.parse(saved);
+    const cards = Object.fromEntries([...document.querySelectorAll('.session-card')].map(el => [el.dataset.id, el]));
+    const presentIds = new Set(state.map(s => s.id));
+
+    state.forEach(({ id, label, summary }) => {
+        const card = cards[id];
+        if (!card) return;
+        card.querySelector('strong').textContent = label;
+        card.querySelector('.session-summary').textContent = summary;
+        card.dataset.label = label;
+        card.dataset.summary = summary;
+    });
+
+    Object.entries(cards).forEach(([id, card]) => {
+        if (!presentIds.has(id)) card.remove();
+    });
+}
+
+// Drag and drop ordering with localStorage persistence
+const STORAGE_KEY = 'session-order';
+
+function saveOrder() {
+    const ids = [...document.querySelectorAll('.session-card')].map(el => el.dataset.id);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(ids));
+}
+
+function restoreOrder() {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (!saved) return;
+    const ids = JSON.parse(saved);
+    const container = document.getElementById('tab-sessions');
+    const cards = Object.fromEntries([...container.querySelectorAll('.session-card')].map(el => [el.dataset.id, el]));
+    ids.forEach(id => { if (cards[id]) container.appendChild(cards[id]); });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    const container = document.getElementById('tab-sessions');
+    restoreOrder();
+    Sortable.create(container, {
+        animation: 150,
+        handle: '.session-header',
+        ghostClass: 'sortable-ghost',
+        onEnd: saveOrder,
+    });
+});
 </script>
 {% endblock %}

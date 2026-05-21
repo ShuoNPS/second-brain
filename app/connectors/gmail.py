@@ -6,7 +6,10 @@ from googleapiclient.discovery import build
 from pathlib import Path
 import pickle
 
-SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+SCOPES = [
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/calendar.readonly",
+]
 CREDENTIALS_PATH = Path(os.getenv("GMAIL_CREDENTIALS_PATH", "credentials.json"))
 TOKEN_PATH = Path("token.pickle")
 

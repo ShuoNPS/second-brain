@@ -31,6 +31,21 @@ def get_events(bucket_id: str, start: datetime, end: datetime) -> list[dict]:
     return response.json()
 
 
+NOISE_TITLES = {"new tab", "newtab", "about:blank", "about:newtab", ""}
+NOISE_URL_PREFIXES = ("chrome://", "chrome-extension://", "moz-extension://", "about:")
+MIN_DURATION_SECONDS = 5
+
+
+def _is_noise(url: str, title: str, duration: float) -> bool:
+    if duration < MIN_DURATION_SECONDS:
+        return True
+    if title.lower().strip() in NOISE_TITLES:
+        return True
+    if any(url.startswith(prefix) for prefix in NOISE_URL_PREFIXES):
+        return True
+    return False
+
+
 def get_browser_activity(start: datetime, end: datetime, tracked_urls: list[str]) -> list[dict]:
     bucket_id = get_browser_bucket_id()
     if not bucket_id:
@@ -43,6 +58,9 @@ def get_browser_activity(start: datetime, end: datetime, tracked_urls: list[str]
         url = event.get("data", {}).get("url", "")
         title = event.get("data", {}).get("title", "")
         duration = event.get("duration", 0)
+
+        if _is_noise(url, title, duration):
+            continue
 
         # Match against configured URLs, fall back to the domain name
         matched_source = urlparse(url).netloc or "other"

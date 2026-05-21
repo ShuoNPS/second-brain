@@ -1,0 +1,29 @@
+<div id="focus-sessions-list">
+{% for fs in focus_sessions %}
+<div class="goal-card {% if fs.done_today %}done{% endif %}">
+    <div class="goal-info">
+        <span class="goal-emoji">{{ fs.emoji }}</span>
+        <div>
+            <strong>{{ fs.name }}</strong>
+            {% if fs.frequency %}<span class="tag">{{ fs.frequency }}</span>{% endif %}
+            {% if fs.streak > 0 %}<span class="streak">🔥 {{ fs.streak }} day streak</span>{% endif %}
+        </div>
+    </div>
+    <div class="goal-actions">
+        <button class="complete-btn {% if fs.done_today %}done{% endif %}"
+            hx-post="/focus_sessions/{{ fs.id }}/toggle"
+            hx-target="#focus-sessions-list"
+            hx-swap="outerHTML">
+            {% if fs.done_today %}✅{% else %}⬜{% endif %}
+        </button>
+        <button class="delete-btn"
+            hx-delete="/focus_sessions/{{ fs.id }}"
+            hx-target="#focus-sessions-list"
+            hx-swap="outerHTML"
+            hx-confirm="Delete this focus session?">✕</button>
+    </div>
+</div>
+{% else %}
+<p style="color:#888">No focus sessions yet — add one below or create from a session.</p>
+{% endfor %}
+</div>

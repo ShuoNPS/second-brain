@@ -1,4 +1,5 @@
 import sqlite3
+import json
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -58,6 +59,43 @@ def init_db():
                 created_at TEXT DEFAULT (datetime('now'))
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS session_cache (
+                id TEXT PRIMARY KEY,
+                label TEXT,
+                summary TEXT,
+                created_at TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS focus_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                emoji TEXT DEFAULT '🎯',
+                frequency TEXT,
+                created_at TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS focus_session_completions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                focus_session_id INTEGER NOT NULL,
+                date TEXT NOT NULL,
+                UNIQUE(focus_session_id, date),
+                FOREIGN KEY(focus_session_id) REFERENCES focus_sessions(id)
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS session_merges (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                target_id TEXT NOT NULL,
+                merged_ids TEXT NOT NULL,
+                label TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                date TEXT NOT NULL,
+                created_at TEXT DEFAULT (datetime('now'))
+            )
+        """)
         conn.commit()
 
 
@@ -80,6 +118,115 @@ def insert_email(message_id: str, timestamp: str, sender: str,
             (message_id, timestamp, sender, subject, snippet, summary, category)
             VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (message_id, timestamp, sender, subject, snippet, summary, category))
+        conn.commit()
+
+
+def get_all_focus_sessions() -> list[dict]:
+    today = datetime.now().strftime("%Y-%m-%d")
+    with get_connection() as conn:
+        rows = conn.execute("SELECT * FROM focus_sessions ORDER BY created_at ASC").fetchall()
+        focus_sessions = [dict(r) for r in rows]
+        for focus_session in focus_sessions:
+            # Check today's completion
+            done = conn.execute(
+                "SELECT 1 FROM focus_session_completions WHERE focus_session_id = ? AND date = ?",
+                (focus_session["id"], today)
+            ).fetchone()
+            focus_session["done_today"] = bool(done)
+            # Calculate streak
+            focus_session["streak"] = _calc_streak(conn, focus_session["id"])
+    return focus_sessions
+
+
+def _calc_streak(conn, focus_session_id: int) -> int:
+    rows = conn.execute(
+        "SELECT date FROM focus_session_completions WHERE focus_session_id = ? ORDER BY date DESC",
+        (focus_session_id,)
+    ).fetchall()
+    if not rows:
+        return 0
+    streak = 0
+    check = datetime.now().date()
+    for row in rows:
+        d = datetime.strptime(row["date"], "%Y-%m-%d").date()
+        if d == check or d == check - __import__('datetime').timedelta(days=1):
+            streak += 1
+            check = d - __import__('datetime').timedelta(days=1)
+        else:
+            break
+    return streak
+
+
+def create_focus_session(name: str, emoji: str = "🎯", frequency: str = "") -> dict:
+    with get_connection() as conn:
+        cursor = conn.execute(
+            "INSERT INTO focus_sessions (name, emoji, frequency) VALUES (?, ?, ?)",
+            (name, emoji, frequency)
+        )
+        conn.commit()
+        row = conn.execute("SELECT * FROM focus_sessions WHERE id = ?", (cursor.lastrowid,)).fetchone()
+    return dict(row)
+
+
+def delete_focus_session(focus_session_id: int):
+    with get_connection() as conn:
+        conn.execute("DELETE FROM focus_sessions WHERE id = ?", (focus_session_id,))
+        conn.execute("DELETE FROM focus_session_completions WHERE focus_session_id = ?", (focus_session_id,))
+        conn.commit()
+
+
+def toggle_focus_session_completion(focus_session_id: int) -> bool:
+    today = datetime.now().strftime("%Y-%m-%d")
+    with get_connection() as conn:
+        existing = conn.execute(
+            "SELECT id FROM focus_session_completions WHERE focus_session_id = ? AND date = ?",
+            (focus_session_id, today)
+        ).fetchone()
+        if existing:
+            conn.execute("DELETE FROM focus_session_completions WHERE focus_session_id = ? AND date = ?", (focus_session_id, today))
+            conn.commit()
+            return False
+        else:
+            conn.execute("INSERT INTO focus_session_completions (focus_session_id, date) VALUES (?, ?)", (focus_session_id, today))
+            conn.commit()
+            return True
+
+
+def save_session_merge(target_id: str, merged_ids: list[str], label: str, summary: str):
+    today = datetime.now().strftime("%Y-%m-%d")
+    with get_connection() as conn:
+        # Remove any existing merge for this target today
+        conn.execute("DELETE FROM session_merges WHERE target_id = ? AND date = ?", (target_id, today))
+        conn.execute("""
+            INSERT INTO session_merges (target_id, merged_ids, label, summary, date)
+            VALUES (?, ?, ?, ?, ?)
+        """, (target_id, json.dumps(merged_ids), label, summary, today))
+        conn.commit()
+
+
+def get_todays_merges() -> list[dict]:
+    today = datetime.now().strftime("%Y-%m-%d")
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT * FROM session_merges WHERE date = ? ORDER BY created_at ASC", (today,)
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_cached_session(session_id: str) -> tuple[str, str] | None:
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT label, summary FROM session_cache WHERE id = ?", (session_id,)
+        ).fetchone()
+    return (row["label"], row["summary"]) if row else None
+
+
+def cache_session(session_id: str, label: str, summary: str):
+    with get_connection() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO session_cache (id, label, summary) VALUES (?, ?, ?)",
+            (session_id, label, summary)
+        )
         conn.commit()
 
 

@@ -1,6 +1,7 @@
 fastapi
 uvicorn
 pyyaml
+google-generativeai
 python-dotenv
 httpx
 google-auth
